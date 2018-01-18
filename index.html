@@ -1,0 +1,797 @@
+<html>
+
+<!--
+
+Copyright (c) 2014 by Jacob Brazeal.
+
+Please do not use without permission.
+
+-->
+
+<head>
+
+<title>Towers of Hanoi</title>
+
+<script type='text/javascript' src='jquery.js' ></script>
+
+<script type='text/javascript' >
+
+var hanoi = { discCount:9, tAll:[[],[],[]], oCur:null, oTower:false, isDragOn:false, dragInfo:[] };
+var game = { state:"pre", moveCount:0, moveRedundancy:false, adjustedMoveCount:0, minMoves:null, startTime:null, endTime:null, timer:null, atimer:null, aspeed:500 };
+var solve = {};
+var records = ( localStorage.records ) ? JSON.parse( localStorage.records ) : { configure:true };
+
+if ( records.configure ) { // first time
+
+	records.configure = false;
+	records.level = [];
+	for ( var i=0; i<hanoi.discCount; i++ ) records.level.push([]);
+	localStorage.records = JSON.stringify( records );
+
+}
+
+var Disc = function( id, tower ) {
+
+this.id = id;
+this.tower = tower;
+
+return this;
+
+}
+
+var Result = function( name, level, time, date, ttext, moves ) { // 0 - indexed!!
+
+this.name = name;
+this.level = level; // 0 - indexed!!
+this.time = time;
+this.date = new Date(date);
+this.ttext= ttext;
+this.moves = moves;
+
+var l = records.level[level].length;
+this.id = ( l ) ? records.level[l-1] + 1 : 0;
+
+return this;
+
+}
+
+game.dataSave = function() {
+
+var rec = new Result ( $("#record-name").val(), hanoi.discCount-1, game.totalTime, game.startTime, game.ttext, game.moveCount );
+var lvl = hanoi.discCount - 1;
+records.level[lvl] = records.level[lvl].oPlace(rec,"time");
+
+localStorage.records = JSON.stringify(records);
+
+}
+
+game.renderRecords = function( lvl ) { // 0-indexed!!
+
+var html = "<h1>Records for Level " + (lvl+1) + "</h1><div id='records-wrap' >\
+<p><small>Display in <select onchange='game.speedUnits(this.value)' ><option value='tt' selected='true'>mm:ss</option><option value='ms' >milliseconds</option></select></p>\
+<table id='records-table'>\
+<tr><th>Rank</th><th>Name</th><th>Speed*</th><th>Moves**</th><th>Date</th>";
+
+for ( var i=0; i<records.level[lvl].length; i++ ) {
+
+var dat = records.level[lvl][i];
+var date = dat.date.toString();
+var my = ( date.split("GM").length > 1 ) ? "my":"";
+date = (my=="my")?"Just now":date.split("T")[0];
+var dm = (dat.moves)?dat.moves:"";
+html+= "<tr class='"+my+"' ><td>" + (i+1) + "</td><td>" + dat.name + "</td><td><span class='ms' >" + dat.time + 
+"ms</span><span class='ttext' >" + dat.ttext + "</span></td><td>" +dm +"</td><td>" + 
+	date + "</td></tr>";
+
+}
+
+
+html+="</table></div><p><small>*Average time: " + "<span class='ms' >" + game.avgTime + 
+"ms</span><span class='ttext' >" + toTText(game.avgTime) + "</span>" + "</small></p>\
+<p><small>**Fewest moves necessary to solve: " + ( Math.pow(2,lvl+1)-1 ) + "</small></p>";
+
+return html;
+
+}
+
+game.speedUnits = function( type ) {
+
+$("body").removeClass("tt").removeClass("ms").addClass( type );
+
+}
+
+Array.prototype.oPlace = function(obj, child) {
+
+var ret = [], placed = false;
+eval("var num = obj."+child+";");
+
+for ( var i=0; i<this.length; i++ ) {
+
+eval("if ( this[i]."+child+"<num || placed ) ret.push(this[i]);\
+else { \
+	if (num!=this[i]."+child+") ret.push(obj);\
+	ret.push(this[i]);\
+	placed = true;\
+}");
+
+
+}
+if (!ret.length) ret.push(obj);
+else eval("if ( num > this[ this.length-1 ]."+child+") ret.push (obj);")
+
+return ret;
+
+}
+
+
+game.go = function() {
+
+game.state = "active";
+$("#film").addClass("less");
+$("#ops1").hide();
+$("#ops2").show();  
+game.timerStart();
+$("#movebox").html("0 moves");
+
+game.progress.findAvg();
+$("#avgtime").html(toTText(game.avgTime));
+$("#toptime").html(toTText(records.level[hanoi.discCount-1][0].time));
+$("body").removeClass("pre").addClass("ingame");
+
+}
+
+game.pause = function() {
+
+if ( game.state == "active") {
+
+game.state = "inactive";
+game.shiftTime();
+$("#film").removeClass("less");
+$("#pause").html("Resume Game");
+
+}
+
+else {
+
+game.state = "active";
+game.resumeTime();
+$("#film").addClass("less");
+$("#pause").html("Pause Game");
+
+}
+
+}
+
+game.shiftTime = function() {
+
+game.curTime = new Date()*1;
+var period = game.curTime - game.baseTime;
+game.otherTime += period;
+
+}
+
+game.resumeTime = function() {
+
+game.curTime = new Date*1;
+game.baseTime = game.curTime;
+
+}
+
+game.timerStart = function() {
+
+game.startTime = new Date()*1;
+game.baseTime = game.startTime;
+game.otherTime = 0;
+$("#timebox").html("00:00");
+game.timer = setTimeout("game.refreshTime()",1000)
+
+}
+
+game.refreshTime = function(){
+
+clearTimeout(game.timer);
+setTimeout("game.refreshTime()",1000);
+
+game.curTime = new Date()*1;
+game.elapsedTime = game.curTime - game.baseTime + game.otherTime;
+
+if ( game.state == "active") {
+
+game.ttext = toTText(game.elapsedTime);
+
+$("#timebox").html(game.ttext);
+
+game.progress.position();
+
+}
+
+}
+
+function toTText( ms ) {
+
+var display = ms/1000;
+var text = "",min="00",sec="00";
+var _min = Math.floor(display/60), _sec= Math.floor(display-(60*_min));
+
+sec=(_sec<10)?"0"+_sec:"" + _sec;
+min=(_min<10)?"0"+_min:"" + _min;
+
+text = min + ":" + sec;
+return text;
+
+
+}
+
+game.updateMoves = function() {
+
+var text = (game.moveCount == 1 )?" move":" moves";
+text = game.moveCount + text;
+$("#movebox").html(text);
+
+}
+
+hanoi.render = function() {
+
+var html = ["","",""], disc=hanoi.discCount;
+
+
+for ( var j=0; j<hanoi.tAll.length; j++ ) {
+for ( var i=0; i<hanoi.tAll[j].length; i++) { 
+
+var id = hanoi.tAll[j][i].id;
+html[j] += "<div onmousedown='hanoi.move(this,"+ (id) + "," + j + ")' id='disc" + (id) + "' class='d w" + id + " h" + (hanoi.tAll[j].length-i) + "' >" + (id) + "</div>";
+
+}
+html[j] += "<div id='tower"+(j+1)+"' class='t' ></div>";
+$("#tower"+(j+1)+"c").html(html[j]);
+}
+
+
+
+}
+
+hanoi.init = function( disc ) {
+
+disc = disc?disc:hanoi.discCount;
+hanoi.discCount = disc;
+game.minMoves = Math.pow( 2, disc ) - 1;
+
+hanoi.tAll = [[],[],[]];
+
+for ( var i=0; i<disc; i++ ) {
+
+var _disc = new Disc( i+1, 0 );
+hanoi.tAll[0].push(_disc);
+
+}
+
+hanoi.render();
+
+}
+
+hanoi.move = function(el,id,tower) {
+
+//determine if is on top of stack
+
+if ( hanoi.tAll[tower][0].id ==  id ) {
+
+hanoi.isDragOn = true;
+hanoi.dragInfo = [el,id,tower];
+var cel = $(el).clone()[0];
+
+$("body").addClass( "m" );
+
+$("#follow").show().html( cel.outerHTML );
+$(el).attr("draggable","true");
+$(el).hide();
+
+}
+
+}
+
+hanoi.release = function() {
+
+var el = hanoi.dragInfo[0];
+var id = hanoi.dragInfo[1];
+var tower = hanoi.dragInfo[2]; 
+
+$("#follow").hide();
+$(el).attr("draggable","false");
+$(el).hide();
+
+hanoi.isDragOn = false;
+
+var destinationTower = hanoi.oCur - 1;
+var _disc = hanoi.tAll[tower][0];
+
+if ( destinationTower != tower && (hanoi.tAll[destinationTower].length == 0 || hanoi.tAll[destinationTower][0].id > id) ) {
+
+_disc.tower = destinationTower;
+hanoi.tAll[tower].shift();
+
+var _darr = [_disc];
+hanoi.tAll[destinationTower] = _darr.concat(hanoi.tAll[destinationTower]);
+
+game.moveCount++;
+game.adjustedMoveCount++;
+
+if (game.previousMove) {
+
+if ( game.previousMove[2] == destinationTower && game.previousMove[3] == tower )
+	game.moveRedundancy = !game.moveRedundancy;
+else game.moveRedundancy = false;
+	
+if ( game.moveRedundancy ) {
+	game.adjustedMoveCount = game.adjustedMoveCount - 2;
+	
+}
+else if ( game.previousMove[1] == id ) 
+	game.adjustedMoveCount--;
+
+}
+
+hanoi.dragInfo[3] = destinationTower;
+game.previousMove = hanoi.dragInfo;
+
+game.updateMoves();
+
+}
+
+$("body").removeClass( "m" );
+hanoi.render();
+
+if  (game.detectSuccess() )
+	game.celebrate();
+
+}
+
+game.detectSuccess = function() {
+
+if ( hanoi.tAll[0].length || ( hanoi.tAll[1].length && hanoi.tAll[2].length ) ) return false;
+
+var newTower = (hanoi.tAll[1].length)?hanoi.tAll[1]:hanoi.tAll[2];
+
+for ( var i=0; i<hanoi.discCount.length; i++ )
+	if (newTower[i].id != i+1 ) 
+		return false;
+		
+return true;
+
+}
+
+game.celebrate = function() {
+
+game.totalTime = game.elapsedTime;
+game.pause();
+game.state = "done";
+$("body").addClass("done");
+game.progress.position(true);
+
+game.animate();
+
+}
+
+game.animate = function() {
+
+game.aDisc = 0;
+
+game.animateNext();
+
+}
+
+game.animateNext = function( ) {
+
+if ( game.aDisc < hanoi.discCount ) {
+game.aDisc++;
+$(".d").removeClass("a");
+$("#disc" + game.aDisc).addClass("a");
+
+clearTimeout(game.atimer);
+game.atimer = setTimeout( "game.animateNext()", game.aspeed);
+
+
+}
+
+else game.animateOver();
+
+}
+
+game.animateOver = function() {
+
+$(".d").removeClass("a");
+$("#pbar").slideUp();
+$("#hanoi-wrap").fadeOut(function() { game.records() });
+
+
+}
+
+game.records = function() {
+
+$("#endgame").show();
+$("#record-name").focus();
+
+}
+
+game.save = function() {
+
+
+
+}
+
+game.progress = {};
+game.progress.percentComplete = function() { // TODO: determine TRUE progress
+
+if ( game.adjustedMoveCount < game.minMoves )
+return game.adjustedMoveCount / game.minMoves;
+
+else return (game.minMoves - 1)/game.minMoves;
+
+}
+
+game.progress.leaderPercent = function(useTotalTime) {
+
+var leader = records.level[ hanoi.discCount - 1 ][0];
+if ( leader ) {
+
+var totTime = leader.time;
+var nowTime = useTotalTime? game.totalTime:game.elapsedTime; 
+
+if ( nowTime < totTime ) return nowTime/totTime;
+else return 1;
+
+}
+
+else {
+
+return game.progress.percentComplete();
+
+}
+
+}
+
+game.progress.findAvg = function() {
+
+var timeSum = 0, len = records.level[ hanoi.discCount - 1].length;
+
+for ( var i=0; i< len; i++ ) 
+	timeSum += records.level[ hanoi.discCount - 1][i].time;
+
+game.avgTime = timeSum / len;
+
+}
+
+game.progress.avgPercent = function( useTotalTime ) {
+
+if ( game.avgTime == undefined ) 
+	game.progress.findAvg();
+
+var avgTime = game.avgTime;
+if ( avgTime ) {
+
+var nowTime = useTotalTime? game.totalTime:game.elapsedTime; 
+
+if ( nowTime < avgTime ) return nowTime/avgTime;
+else return 1;
+
+}
+
+else {
+
+return game.progress.percentComplete();
+
+}
+
+}
+
+game.progress.position = function( done ) {
+
+var width = $("#pbar").width();
+
+if ( !done ){
+$("#prog").css( "width",(game.progress.percentComplete()*width)+"px" );
+$("#leader").css( "left", (game.progress.leaderPercent()*width-1.5)+"px" );
+$("#avg").css( "left", (game.progress.avgPercent()*width-1.5)+"px" );
+}
+
+else {
+$("#prog").css( "width",width+"px" );
+$("#leader").css( "left", (game.progress.leaderPercent(true)*width-1.5)+"px" );
+$("#avg").css( "left", (game.progress.avgPercent(true)*width-1.5)+"px" );
+}
+
+}
+
+solve.findNextMove = function() {
+
+
+
+}
+
+
+
+$(document).ready(function() {
+
+hanoi.init();
+
+$(".tc").mouseenter(function() {
+
+hanoi.oCur = this.id.split("r")[1].split("c")[0];
+if ( hanoi.isDragOn ) $(this).addClass("move");
+
+});
+
+$(".tc").click(function() {
+
+hanoi.release();
+
+});
+
+$(".tc").mouseout(function() {
+
+//hanoi.oCur = null;
+$(this).removeClass("move");
+
+});
+
+$(window).mousemove( function(e) {
+
+var w = $("#follow").width();
+
+$("#follow").css("left",e.pageX+5-w/2);
+$("#follow").css("top",e.pageY+50);
+
+});
+
+$("#start").click(function(){
+
+game.go();
+
+});
+
+$("#pause").click(function(){
+
+game.pause();
+
+});
+
+$("#moves").change(function(){
+
+var discs = this.value*1;
+hanoi.init(discs);
+
+});
+
+$("#save").click( function() {
+
+game.dataSave();
+game.progress.findAvg();
+$("#endgame-content").html( game.renderRecords( hanoi.discCount-1 ) );
+$("#endgame-head").hide();
+
+});
+
+});
+
+</script>
+
+<style type='text/css' >
+
+@import url("http://fonts.googleapis.com/css?family=Josefin Sans:400");
+
+::selection { background:transparent; }
+a { color:#2bf; text-decoration:none; }
+a:hover { text-decoration:underline; }
+body { font-family:Josefin Sans; background:#eee; margin:0; }
+input, select, button { font-family:Josefin Sans; }
+#head { box-shadow:3px 3px 3px #bbb;color:black; text-shadow:1px 1px white; width:100%; position:fixed; z-index:5; top:0; left:0; margin-left:auto; margin-right:auto; padding:15px; background:#fafafa;  }
+#content { height:100%; }
+#base {text-align:center; border-top:1px solid white; position:fixed; bottom:0; left:0; z-index:2; border-bottom:1px solid gray; width:100%; background:gray; height:50px; }
+#tag { color:white; display:block; background:black; opacity:0.5; filter:Alpha(opacity=0.5); padding:5px; z-index:100; width:100px; position:fixed; right:10; bottom:10; text-align:center; border:1px dotted white; }
+#tag a { color:white; }
+#hanoi-wrap { }
+.t { text-shadow:1px 1px white; border:1px solid black; border-bottom:1px solid gray; width:20%; margin-left:40%; height:400px; background-color:gray; border-radius:5 5 0 0; float:left; background: gray; /* Old browsers */
+background: -moz-linear-gradient(top, lightgray 0%, gray 100%); /* FF3.6+ */
+background: -webkit-gradient(linear, left top, left bottom, color-stop(0%,lightgray), color-stop(100%,gray)); /* Chrome,Safari4+ */
+background: -webkit-linear-gradient(top, lightgray 0%,gray 100%); /* Chrome10+,Safari5.1+ */
+background: -o-linear-gradient(top, lightgray 0%,gray 100%); /* Opera11.10+ */
+background: -ms-linear-gradient(top, lightgray 0%,gray 100%); /* IE10+ */
+filter: progid:DXImageTransform.Microsoft.gradient( startColorstr='lightgray', endColorstr='gray',GradientType=0 ); /* IE6-9 */
+background: linear-gradient(top, lightgray 0%,gray 100%); /* W3C */ } 
+.d { text-align:center; font-size:20pt; color:gray; height:35px; position:absolute; margin-bottom:5px; border-radius:5px; z-index:1000; opacity:0.7; filter:Alpha(opacity=0.7); background:black; margin-left:auto; margin-right:auto; cursor:move; }
+.d:hover { background:blue; color:white; }
+.d.w1 { width:25%; margin-left:37.5% }
+.d.w2 { width:30%; margin-left:35%; }
+.d.w3 { width:35%; margin-left:32.5%; }
+.d.w4 { width:40%; margin-left:30%; }
+.d.w5 { width:45%; margin-left:27.5%; }
+.d.w6 { width:50%; margin-left:25%; }
+.d.w7 { width:55%; margin-left:22.5%; }
+.d.w8 { width:60%; margin-left:20%; }
+.d.w9 { width:65%; margin-left:17.5%; }
+.d.h1 { bottom:5; }
+.d.h2 { bottom:45; }
+.d.h3 { bottom:85; }
+.d.h4 { bottom:125; }
+.d.h5 { bottom:165; }
+.d.h6 { bottom:205; }
+.d.h7 { bottom:245; }
+.d.h8 { bottom:285; }
+.d.h9 { bottom:325; }
+.tc { width:33%; position:fixed; bottom:50px; z-index:2; }
+.tc.move { cursor:pointer; }
+body.m .tc:hover .t, body.m .t:hover { background:darkgray; cursor:pointer; }
+
+#tower1c {}
+#tower2c { left:33%; }
+#tower3c { left:66%; }
+
+#follow { display:none; width:33%; max-height:35px; position:fixed; left:0; top:0;  }
+#follow .d { bottom:0px; }
+
+button {text-align:center; font-size:14pt; border:1px solid #ccc; cursor:pointer; padding:8px; background: #eee; /* Old browsers */
+background: -moz-linear-gradient(top, #fafafa 0%, #eee 100%); /* FF3.6+ */
+background: -webkit-gradient(linear, left top, left bottom, color-stop(0%,#fafafa), color-stop(100%,#eee)); /* Chrome,Safari4+ */
+background: -webkit-linear-gradient(top, #fafafa 0%,#eee 100%); /* Chrome10+,Safari5.1+ */
+background: -o-linear-gradient(top, #fafafa 0%,#eee 100%); /* Opera11.10+ */
+background: -ms-linear-gradient(top, #fafafa 0%,#eee 100%); /* IE10+ */
+filter: progid:DXImageTransform.Microsoft.gradient( startColorstr='#fafafa', endColorstr='#eee',GradientType=0 ); /* IE6-9 */
+background: linear-gradient(top, #fafafa 0%,#eee 100%); /* W3C */
+-webkit-transition: background .2s;}
+button:hover { background:#eee; }
+button:active { background:#ddd; box-shadow:2px 2px 2px #ccc inset; }
+
+#ops2 { display:none; }
+.ops { position:fixed; z-index:10; right:0; top:0;  }
+.ops td { height:100%; padding:40px; background:#fafafa; border-left:1px solid #ccc; border-radius:0px; }
+.ops button { padding:25px; padding-top:30px; padding-bottom:30px; }
+#sbtn-wrap, #pbtn-wrap { padding:5px; padding-top:0px; padding-bottom:0px; }
+
+#film { position:fixed; height:100%; width:100%; z-index:4; background:url("bg.png"); }
+#film.less { z-index:1;}
+
+.d.a { background:gold; opacity:1; }
+
+#endgame { text-shadow:1px 1px black; box-shadow:2px 2px 2px #888;  width:60%; height:500px; position:fixed; background:gray; border-radius:3px; top:150px; left:20%; z-index:11; display:none; }
+#endgame-head { color:white; font-size:50pt; padding:40px; text-align:center; }
+#endgame-content, #endgame-content td { color:white; font-size:14pt;padding:40px; padding-top:0px; }
+#endgame table { margin-top:25px; }
+
+input { padding:15px;border-radius:5px; font-size:14pt;  }
+
+#done { display:none; font-weight:bold; color:green; }
+body.done #pbtn-wrap { display:none; }
+body.done #done { display:table-cell; }
+
+.ttext { display:none; }
+body.tt .ttext { display:inline; }
+body.tt .ms { display:none; }
+
+#records-wrap {border:0px solid black; padding-top:5px; padding-bottom:5px; margin-top:10px; max-height:250px; overflow-x:scroll;} 
+#records-table td { padding:3px; padding-bottom:0px; padding-top:0px; text-align:center; font-size:10pt;}
+#records-table { width:100%; border-collapse:0px; }
+
+body.pre #pbar { display:none;}
+body.ingame #pbar { display:block; position:fixed; width:100%; height:35px; left:0; top:100; background:#ccc; border:1px solid gray; border-radius:8px;}
+#prog { height:100%; background:blue; width:0%; z-index:2; min-width:3px; }
+#pbar #text { position:fixed; z-index:50; top:112; left:15; color:white;}
+#pbar #leader { width:3px; background:gold; position:fixed; top:100; left:0; height:35px; }
+#pbar #avg { width:3px; background:red; position:fixed; top:100; left:0; height:35px; }
+
+.my td { border-bottom:1px dashed white; border-top:1px dashed white; }
+
+body.pre #key { display:none; }
+body.done #key { display:none; }
+#key { position:fixed; top:135; left:0; font-size:10pt; background:#fafafa; width:100%; z-index:8; height:40px; box-shadow:3px -3px 3px #bbb; border-bottom:1px solid #ccc;}
+#kt { font-size:10pt; margin-top:10px; }
+#k_red { background:red; width:10px; height:10px; border-left:15px solid #fafafa;   }
+#k_gold { background:gold; width:10px; height:10px; border-left:15px solid #fafafa;  }
+#k_blue { background:blue; width:10px; height:10px; border-left:15px solid #fafafa;  }
+
+</style>
+
+</head>
+<body class='tt pre' >
+<div id='film' ></div>
+
+<table id='ops1' class='ops' >
+<tr>
+<td>Level: <select id='moves' ><option value="1" >1</option>><option value="2" >2</option>><option value="3" >3</option>><option value="4" >4</option>><option value="5" >5</option>><option value="6" >6</option>><option value="7" >7</option>><option value="8" >8</option>><option selected='selected' value="9" >9</option></select></td>
+<td id='sbtn-wrap' ><button id='start' >Start Game</button></td>
+<tr>
+</table>
+<table id='ops2' class='ops' >
+<tr>
+<td id='timebox' ></td>
+<td id='movebox' ></td>
+<td id='pbtn-wrap' ><button id='pause' >Pause Game</button></td>
+<td id='done' >Game Over</td>
+<tr>
+</table>
+
+
+<div id='wrap' >
+
+<div id='head' >
+
+<h1>The Towers of Hanoi: Brain Teaser</h1>
+
+
+</div>
+
+<div id='content' >
+
+</div>
+
+<div id='pbar' >
+<div id='text' >Progress</div>
+<div id='prog' ></div>
+<div id='leader' ></div>
+<div id='avg' ></div>
+</div>
+
+<div id='key' >
+<table id='kt' >
+<tr><td id='k_red' ></td><td>Average time (<span id='avgtime' ></span>)</td>
+<td id='k_gold' ></td><td>Top time (<span id='toptime' ></span>)</td>
+<td id='k_blue' ></td><td>My progress (approximate)</td></tr>
+</table>
+
+</div>
+
+</div>
+
+</div>
+
+<div id='hanoi-wrap' >
+<div id="base" ></div>
+<div id='towers' >
+
+<div id='tower1c' class='tc' >
+
+<div id='tower1' class='t' ></div>
+</div>
+
+<div id='tower2c' class='tc'  >
+
+<div id='tower2' class='t' ></div>
+</div>
+
+<div id='tower3c' class='tc' >
+
+<div id='tower3' class='t' ></div>
+</div>
+
+</div>
+
+</div>
+
+<div id='follow' ></div>
+
+<div id="endgame" >
+
+<div id='endgame-head' >
+
+Good work.
+
+</div>
+
+<div id='endgame-content' >
+
+<p>Now that you've won, you can save your time in the records. We just need your nickname.
+
+<table>
+<tr>
+<td>Name</td>
+<td><input id='record-name' type='text' /></td>
+<td><button id='save' >Save</button></td>
+</tr>
+</table>
+
+</div>
+
+</div>
+
+<span id='tag'>by <a href='http://jacobbrazeal.com' >Jacob Brazral</a></span>
+ 
+</body>
+</html>
